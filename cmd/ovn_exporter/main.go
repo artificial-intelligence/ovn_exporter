@@ -156,6 +156,54 @@ func main() {
 		)
 		os.Exit(1)
 	}
+
+	exporter.Client.System.RunDir = systemRunDir
+
+	exporter.Client.Database.Vswitch.Name = databaseVswitchName
+	exporter.Client.Database.Vswitch.Socket.Remote = databaseVswitchSocketRemote
+	exporter.Client.Database.Vswitch.File.Data.Path = databaseVswitchFileDataPath
+	exporter.Client.Database.Vswitch.File.Log.Path = databaseVswitchFileLogPath
+	exporter.Client.Database.Vswitch.File.Pid.Path = databaseVswitchFilePidPath
+	exporter.Client.Database.Vswitch.File.SystemID.Path = databaseVswitchFileSystemIDPath
+
+	exporter.Client.Database.Northbound.Name = databaseNorthboundName
+	exporter.Client.Database.Northbound.Socket.Remote = databaseNorthboundSocketRemote
+	exporter.Client.Database.Northbound.Socket.Control = databaseNorthboundSocketControl
+	exporter.Client.Database.Northbound.File.Data.Path = databaseNorthboundFileDataPath
+	exporter.Client.Database.Northbound.File.Log.Path = databaseNorthboundFileLogPath
+	exporter.Client.Database.Northbound.File.Pid.Path = databaseNorthboundFilePidPath
+	exporter.Client.Database.Northbound.Port.Default = databaseNorthboundPortDefault
+	exporter.Client.Database.Northbound.Port.Ssl = databaseNorthboundPortSsl
+	exporter.Client.Database.Northbound.Port.Raft = databaseNorthboundPortRaft
+
+	exporter.Client.Database.Southbound.Name = databaseSouthboundName
+	exporter.Client.Database.Southbound.Socket.Remote = databaseSouthboundSocketRemote
+	exporter.Client.Database.Southbound.Socket.Control = databaseSouthboundSocketControl
+	exporter.Client.Database.Southbound.File.Data.Path = databaseSouthboundFileDataPath
+	exporter.Client.Database.Southbound.File.Log.Path = databaseSouthboundFileLogPath
+	exporter.Client.Database.Southbound.File.Pid.Path = databaseSouthboundFilePidPath
+	exporter.Client.Database.Southbound.Port.Default = databaseSouthboundPortDefault
+	exporter.Client.Database.Southbound.Port.Ssl = databaseSouthboundPortSsl
+	exporter.Client.Database.Southbound.Port.Raft = databaseSouthboundPortRaft
+
+	exporter.Client.Service.Vswitchd.File.Log.Path = serviceVswitchdFileLogPath
+	exporter.Client.Service.Vswitchd.File.Pid.Path = serviceVswitchdFilePidPath
+
+	exporter.Client.Service.Northd.File.Log.Path = serviceNorthdFileLogPath
+	exporter.Client.Service.Northd.File.Pid.Path = serviceNorthdFilePidPath
+
+	exporter, err = ovn.ExporterPerformClientCalls(exporter)
+	if err != nil {
+		level.Error(logger).Log(
+			"msg", "failed to finalize exporter calls properly",
+			"exporter_name", ovn.GetExporterName(),
+			"error", err.Error(),
+		)
+	}
+
+	level.Info(logger).Log("ovs_system_id", exporter.Client.System.ID)
+
+	exporter.SetPollInterval(int64(pollInterval))
 	prometheus.MustRegister(exporter)
 
 	http.Handle(metricsPath, promhttp.Handler())
