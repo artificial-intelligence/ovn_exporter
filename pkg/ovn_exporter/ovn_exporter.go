@@ -287,11 +287,13 @@ type Exporter struct {
 	nextCollectionTicker int64
 	metrics              []prometheus.Metric
 	logger               log.Logger
+	EnabledFeatures      map[string]bool
 }
 
 type Options struct {
-	Timeout int
-	Logger  log.Logger
+	Timeout         int
+	Logger          log.Logger
+	EnabledFeatures map[string]bool
 }
 
 // NewLogger returns an instance of logger.
@@ -315,8 +317,9 @@ func NewExporter(opts Options) (*Exporter, error) {
 	version.BuildUser = buildUser
 	version.BuildDate = buildDate
 	e := Exporter{
-		timeout: opts.Timeout,
-		logger:  opts.Logger,
+		timeout:         opts.Timeout,
+		logger:          opts.Logger,
+		EnabledFeatures: opts.EnabledFeatures,
 	}
 	client := ovsdb.NewOvnClient()
 	client.Timeout = opts.Timeout
@@ -498,122 +501,142 @@ func (e *Exporter) GatherMetrics() {
 		)
 	}
 
-	components := []string{
-		"ovsdb-server",
-		"ovsdb-server-southbound",
-		"ovsdb-server-southbound-monitoring",
-		"ovsdb-server-northbound",
-		"ovsdb-server-northbound-monitoring",
-		"ovn-northd",
-		"ovn-northd-monitoring",
-		"ovs-vswitchd",
+	components := []string{}
+
+	features := map[string]string{
+		"collectOvsdbServerMetrics": "ovsdb-server",
+		// currently unused, as GetLogicalSwitches() requires both north- and southbound DBs
+		"collectSouthboundMetrics": "ovsdb-server-southbound ovsdb-server-southbound-monitoring",
+		"collectNorthboundMetrics": "ovsdb-server-northbound ovsdb-server-northbound-monitoring",
+		"collectNorthdMetrics":     "ovn-northd ovn-northd-monitoring",
+		"collectVswitchMetrics":    "ovs-vswitchd",
 	}
+
+	for feature, component := range features {
+		if e.EnabledFeatures[feature] {
+			components = append(components, component)
+		}
+	}
+
 	for _, component := range components {
-		p, err := e.Client.GetProcessInfo(component)
-		level.Debug(e.logger).Log(
-			"msg", "GatherMetrics() calls GetProcessInfo()",
-			"component", component,
-			"system_id", e.Client.System.ID,
-		)
-		if err != nil {
-			level.Error(e.logger).Log(
-				"msg", "GetProcessInfo() failed",
+		if e.EnabledFeatures["collectPidMetrics"] {
+			p, err := e.Client.GetProcessInfo(component)
+			level.Debug(e.logger).Log(
+				"msg", "GatherMetrics() calls GetProcessInfo()",
 				"component", component,
 				"system_id", e.Client.System.ID,
-				"error", err.Error(),
 			)
-			e.IncrementErrorCounter()
-			upValue = 0
+			if err != nil {
+				level.Error(e.logger).Log(
+					"msg", "GetProcessInfo() failed",
+					"component", component,
+					"system_id", e.Client.System.ID,
+					"error", err.Error(),
+				)
+				e.IncrementErrorCounter()
+				upValue = 0
+			}
+			e.metrics = append(e.metrics, prometheus.MustNewConstMetric(
+				pid,
+				prometheus.GaugeValue,
+				float64(p.ID),
+				e.Client.System.ID,
+				component,
+				p.User,
+				p.Group,
+			))
+			level.Debug(e.logger).Log(
+				"msg", "GatherMetrics() completed GetProcessInfo()",
+				"component", component,
+				"system_id", e.Client.System.ID,
+			)
 		}
-		e.metrics = append(e.metrics, prometheus.MustNewConstMetric(
-			pid,
-			prometheus.GaugeValue,
-			float64(p.ID),
-			e.Client.System.ID,
-			component,
-			p.User,
-			p.Group,
-		))
-		level.Debug(e.logger).Log(
-			"msg", "GatherMetrics() completed GetProcessInfo()",
-			"component", component,
-			"system_id", e.Client.System.ID,
-		)
 	}
 
 	components = []string{
 		"ovsdb-server",
-		"ovsdb-server-southbound",
-		"ovsdb-server-northbound",
-		"ovn-northd",
-		"ovs-vswitchd",
 	}
-	for _, component := range components {
-		level.Debug(e.logger).Log(
-			"msg", "GatherMetrics() calls GetLogFileInfo()",
-			"component", component,
-			"system_id", e.Client.System.ID,
-		)
-		file, err := e.Client.GetLogFileInfo(component)
-		if err != nil {
-			level.Error(e.logger).Log(
-				"msg", "GetLogFileInfo() failed",
-				"component", component,
-				"system_id", e.Client.System.ID,
-				"error", err.Error(),
-			)
-			e.IncrementErrorCounter()
-			continue
-		}
-		level.Debug(e.logger).Log(
-			"msg", "GatherMetrics() completed GetLogFileInfo()",
-			"component", component,
-			"system_id", e.Client.System.ID,
-		)
-		e.metrics = append(e.metrics, prometheus.MustNewConstMetric(
-			logFileSize,
-			prometheus.GaugeValue,
-			float64(file.Info.Size()),
-			e.Client.System.ID,
-			file.Component,
-			file.Path,
-		))
-		level.Debug(e.logger).Log(
-			"msg", "GatherMetrics() calls GetLogFileEventStats()",
-			"component", component,
-			"system_id", e.Client.System.ID,
-		)
-		eventStats, err := e.Client.GetLogFileEventStats(component)
-		if err != nil {
-			level.Error(e.logger).Log(
-				"msg", "GetLogFileEventStats() failed",
-				"component", component,
-				"system_id", e.Client.System.ID,
-				"error", err.Error(),
-			)
-			e.IncrementErrorCounter()
-			continue
-		}
-		level.Debug(e.logger).Log(
-			"msg", "GatherMetrics() completed GetLogFileEventStats()",
-			"component", component,
-			"system_id", e.Client.System.ID,
-		)
-		for sev, sources := range eventStats {
-			for source, count := range sources {
-				e.metrics = append(e.metrics, prometheus.MustNewConstMetric(
-					logEventStat,
-					prometheus.GaugeValue,
-					float64(count),
-					e.Client.System.ID,
-					component,
-					sev,
-					source,
-				))
-			}
+
+	features = map[string]string{
+		"collectSouthboundMetrics": "ovsdb-server-southbound",
+		"collectNorthboundMetrics": "ovsdb-server-northbound",
+		"collectNorthdMetrics":     "ovn-northd",
+		"collectVswitchMetrics":    "ovs-vswitchd",
+	}
+
+	for feature, component := range features {
+		if e.EnabledFeatures[feature] {
+			components = append(components, component)
 		}
 	}
 
+	if e.EnabledFeatures["collectLogMetrics"] {
+		for _, component := range components {
+			level.Debug(e.logger).Log(
+				"msg", "GatherMetrics() calls GetLogFileInfo()",
+				"component", component,
+				"system_id", e.Client.System.ID,
+			)
+			file, err := e.Client.GetLogFileInfo(component)
+			if err != nil {
+				level.Error(e.logger).Log(
+					"msg", "GetLogFileInfo() failed",
+					"component", component,
+					"system_id", e.Client.System.ID,
+					"error", err.Error(),
+				)
+				e.IncrementErrorCounter()
+				continue
+			}
+			level.Debug(e.logger).Log(
+				"msg", "GatherMetrics() completed GetLogFileInfo()",
+				"component", component,
+				"system_id", e.Client.System.ID,
+			)
+			e.metrics = append(e.metrics, prometheus.MustNewConstMetric(
+				logFileSize,
+				prometheus.GaugeValue,
+				float64(file.Info.Size()),
+				e.Client.System.ID,
+				file.Component,
+				file.Path,
+			))
+			level.Debug(e.logger).Log(
+				"msg", "GatherMetrics() calls GetLogFileEventStats()",
+				"component", component,
+				"system_id", e.Client.System.ID,
+			)
+			eventStats, err := e.Client.GetLogFileEventStats(component)
+			if err != nil {
+				level.Error(e.logger).Log(
+					"msg", "GetLogFileEventStats() failed",
+					"component", component,
+					"system_id", e.Client.System.ID,
+					"error", err.Error(),
+				)
+				e.IncrementErrorCounter()
+				continue
+			}
+			level.Debug(e.logger).Log(
+				"msg", "GatherMetrics() completed GetLogFileEventStats()",
+				"component", component,
+				"system_id", e.Client.System.ID,
+			)
+			for sev, sources := range eventStats {
+				for source, count := range sources {
+					e.metrics = append(e.metrics, prometheus.MustNewConstMetric(
+						logEventStat,
+						prometheus.GaugeValue,
+						float64(count),
+						e.Client.System.ID,
+						component,
+						sev,
+						source,
+					))
+				}
+			}
+		}
+	}
 	level.Debug(e.logger).Log(
 		"msg", "GatherMetrics() calls GetChassis()",
 		"system_id", e.Client.System.ID,
